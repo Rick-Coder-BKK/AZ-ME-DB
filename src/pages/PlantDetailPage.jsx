@@ -1,521 +1,611 @@
 import { useState } from 'react';
 import {
-  RagDot, RagBadge, RagSelect, MeasureSelect, SectionCard, GlassCard, Card,
-  TrendIcon, MeasureStatusBadge, plantOverallRag, countRedKpis, countAmberKpis,
+  RagDot, RagBadge, RagSelect, MeasureSelect, GlassCard, Card, SectionCard,
+  WeekSelector, TrendIcon, MeasureBadge,
+  RAG, plantRag, countRag, topRisk,
 } from '../components/shared';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-const PLANT_META = {
-  AmaP: { flag: '🇹🇭', countryName: 'Thailand' },
-  HmjP: { flag: '🇹🇭', countryName: 'Thailand' },
-  PgP1: { flag: '🇲🇾', countryName: 'Malaysia' },
-  PgP2: { flag: '🇲🇾', countryName: 'Malaysia' },
-  PgP5: { flag: '🇲🇾', countryName: 'Malaysia' },
-  HcP:  { flag: '🇻🇳', countryName: 'Vietnam' },
-  RBID: { flag: '🇮🇩', countryName: 'Indonesia' },
+function plantTrend(curWeek, prevWeek, plantId) {
+  if (!prevWeek) return 'stable';
+  const order = { green: 0, amber: 1, red: 2 };
+  const cur  = order[plantRag(curWeek?.kpiData,  plantId)] ?? 0;
+  const prev = order[plantRag(prevWeek?.kpiData, plantId)] ?? 0;
+  if (cur > prev) return 'worsening';
+  if (cur < prev) return 'improving';
+  return 'stable';
+}
+
+function kpiTrend(curWeek, prevWeek, plantId, kpiId) {
+  if (!prevWeek) return 'stable';
+  const order = { green: 0, amber: 1, red: 2 };
+  const cur  = order[(curWeek?.kpiData?.[plantId]  || {})[kpiId]] ?? 0;
+  const prev = order[(prevWeek?.kpiData?.[plantId] || {})[kpiId]] ?? 0;
+  if (cur > prev) return 'worsening';
+  if (cur < prev) return 'improving';
+  return 'stable';
+}
+
+const TREND_LABEL = {
+  improving: { text: '↑ Improving', color: '#86efac' },
+  worsening: { text: '↓ Worsening', color: '#fca5a5' },
+  stable:    { text: '→ Stable',    color: '#fcd34d' },
 };
 
-const TREND_OPTIONS = [
-  { value: 'improving', label: '↑ Improving', activeColor: '#16a34a', activeText: '#86efac', inactiveText: '#94a3b8' },
-  { value: 'stable',    label: '→ Stable',    activeColor: '#d97706', activeText: '#fcd34d', inactiveText: '#94a3b8' },
-  { value: 'worsening', label: '↓ Worsening', activeColor: '#dc2626', activeText: '#fca5a5', inactiveText: '#94a3b8' },
-];
+// ── Sub-components ────────────────────────────────────────────────────────────
 
-const MEASURE_GROUP_ORDER = ['active', 'planned', 'inactive'];
-
-const MEASURE_GROUP_LABELS = {
-  active:   'Active',
-  planned:  'Planned',
-  inactive: 'Inactive',
-};
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function ragStatusText(kpi, status) {
-  if (status === 'red')   return kpi.red;
-  if (status === 'amber') return kpi.amber;
-  return kpi.green;
-}
-
-function ragLeftBorderColor(status) {
-  if (status === 'red')   return '#dc2626';
-  if (status === 'amber') return '#d97706';
-  return '#16a34a';
-}
-
-function ragCardTint(status) {
-  if (status === 'red')   return 'rgba(220,38,38,0.08)';
-  if (status === 'amber') return 'rgba(217,119,6,0.08)';
-  return 'rgba(22,163,74,0.08)';
-}
-
-function ragHeaderTint(status) {
-  if (status === 'red')   return 'linear-gradient(135deg, rgba(220,38,38,0.18) 0%, rgba(255,255,255,0.03) 100%)';
-  if (status === 'amber') return 'linear-gradient(135deg, rgba(217,119,6,0.18) 0%, rgba(255,255,255,0.03) 100%)';
-  return 'linear-gradient(135deg, rgba(22,163,74,0.18) 0%, rgba(255,255,255,0.03) 100%)';
-}
-
-function ragStatusTextColor(status) {
-  if (status === 'red')   return '#fca5a5';
-  if (status === 'amber') return '#fcd34d';
-  return '#86efac';
-}
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function PlantSelectorBar({ plants, selectedPlant, onSelect, kpiData }) {
+function TopBar({ kpiHistory, selectedWeekIdx, setSelectedWeekIdx, selectedWeek }) {
   return (
-    <div style={{
-      background: 'rgba(255,255,255,0.05)',
-      backdropFilter: 'blur(20px)',
-      border: '1px solid rgba(255,255,255,0.1)',
-      borderRadius: 16,
-      padding: '14px 20px',
-    }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.1em', marginRight: 4, whiteSpace: 'nowrap' }}>
-          Select Plant
-        </span>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-          {plants.map(p => {
-            const rag = plantOverallRag(kpiData, p.id);
-            const isActive = p.id === selectedPlant;
-            const meta = PLANT_META[p.id] || {};
-            const ragCol = rag === 'red' ? '#dc2626' : rag === 'amber' ? '#d97706' : '#16a34a';
-            return (
-              <button
-                key={p.id}
-                onClick={() => onSelect(p.id)}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 14px',
-                  borderRadius: 999,
-                  border: isActive
-                    ? '2px solid rgba(99,179,237,0.8)'
-                    : '1px solid rgba(255,255,255,0.15)',
-                  background: isActive
-                    ? 'rgba(99,179,237,0.15)'
-                    : 'rgba(255,255,255,0.05)',
-                  color: isActive ? '#e2e8f0' : '#94a3b8',
-                  fontSize: 12,
-                  fontWeight: isActive ? 700 : 500,
-                  cursor: 'pointer',
-                  boxShadow: isActive ? '0 0 12px rgba(99,179,237,0.35)' : 'none',
-                  transition: 'all 0.15s ease',
-                }}
-              >
-                <span style={{ fontSize: 15, lineHeight: 1 }}>{meta.flag}</span>
-                <span>{p.id}</span>
-                <RagDot status={rag} size="sm" />
-              </button>
-            );
-          })}
-        </div>
-      </div>
+    <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+      <WeekSelector
+        kpiHistory={kpiHistory}
+        selectedWeekIdx={selectedWeekIdx}
+        setSelectedWeekIdx={setSelectedWeekIdx}
+      />
+      <span
+        className="px-3 py-1.5 rounded-full text-xs font-semibold"
+        style={{
+          background: 'rgba(59,130,246,0.15)',
+          border: '1px solid rgba(59,130,246,0.35)',
+          color: '#93c5fd',
+        }}
+      >
+        ✏️ Editing: {selectedWeek?.week} · {selectedWeek?.label}
+      </span>
     </div>
   );
 }
 
-function PlantHeaderCard({ selectedPlant, meta, overallRag, redCount, amberCount, greenCount, trend, onTrendChange, plantNote }) {
-  const previewNote = plantNote ? plantNote.slice(0, 100) + (plantNote.length > 100 ? '…' : '') : null;
-
+function PlantSelector({ plants, selectedPlant, setSelectedPlant, selectedWeek }) {
   return (
-    <div style={{
-      background: ragHeaderTint(overallRag),
-      backdropFilter: 'blur(20px)',
-      border: '1px solid rgba(255,255,255,0.1)',
-      borderRadius: 16,
-      boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
-      overflow: 'hidden',
-    }}>
-      <div style={{ padding: '24px 28px' }}>
-
-        {/* Top: plant name + country + RAG badge */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <span style={{ fontSize: 48, lineHeight: 1 }}>{meta.flag}</span>
-            <div>
-              <h1 style={{ margin: 0, fontSize: 28, fontWeight: 800, color: '#f1f5f9', letterSpacing: '-0.02em' }}>
-                {selectedPlant}
-              </h1>
-              <p style={{ margin: '2px 0 0', fontSize: 13, color: '#94a3b8' }}>{meta.countryName}</p>
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <RagBadge status={overallRag} />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-              <TrendIcon trend={trend} />
-              <span style={{ fontSize: 12, color: '#cbd5e1', textTransform: 'capitalize' }}>{trend}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* KPI count pills */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-          <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '4px 12px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-            background: 'rgba(220,38,38,0.2)', border: '1px solid rgba(220,38,38,0.4)', color: '#fca5a5',
-          }}>
-            <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#dc2626', display: 'inline-block' }} />
-            {redCount} Red
-          </span>
-          <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '4px 12px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-            background: 'rgba(217,119,6,0.2)', border: '1px solid rgba(217,119,6,0.4)', color: '#fcd34d',
-          }}>
-            <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#d97706', display: 'inline-block' }} />
-            {amberCount} Amber
-          </span>
-          <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '4px 12px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-            background: 'rgba(22,163,74,0.2)', border: '1px solid rgba(22,163,74,0.4)', color: '#86efac',
-          }}>
-            <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#16a34a', display: 'inline-block' }} />
-            {greenCount} Green
-          </span>
-        </div>
-
-        {/* Trend selector */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginBottom: previewNote ? 16 : 0 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-            Trend:
-          </span>
-          {TREND_OPTIONS.map(opt => {
-            const isActive = trend === opt.value;
-            return (
-              <button
-                key={opt.value}
-                onClick={() => onTrendChange(opt.value)}
-                style={{
-                  padding: '5px 14px',
-                  borderRadius: 999,
-                  border: isActive ? `1px solid ${opt.activeColor}88` : '1px solid rgba(255,255,255,0.12)',
-                  background: isActive ? `${opt.activeColor}33` : 'rgba(255,255,255,0.04)',
-                  color: isActive ? opt.activeText : opt.inactiveText,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                  boxShadow: isActive ? `0 0 10px ${opt.activeColor}44` : 'none',
-                }}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Notes preview */}
-        {previewNote && (
-          <div style={{
-            marginTop: 0,
-            padding: '10px 14px',
-            borderRadius: 10,
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.08)',
-          }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 4 }}>
-              Latest Notes
-            </span>
-            <p style={{ margin: 0, fontSize: 12, color: '#94a3b8', fontStyle: 'italic', lineHeight: 1.5 }}>
-              "{previewNote}"
-            </p>
-          </div>
-        )}
-      </div>
+    <div className="flex flex-wrap gap-2 mb-5">
+      {plants.map(plant => {
+        const rag = plantRag(selectedWeek?.kpiData, plant.id);
+        const active = selectedPlant === plant.id;
+        return (
+          <button
+            key={plant.id}
+            onClick={() => setSelectedPlant(plant.id)}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold transition-all"
+            style={active ? {
+              background: 'rgba(59,130,246,0.2)',
+              border: '1px solid rgba(59,130,246,0.6)',
+              color: 'white',
+              boxShadow: '0 0 14px rgba(59,130,246,0.35)',
+            } : {
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              color: '#94a3b8',
+            }}
+          >
+            <span>{plant.flag}</span>
+            <span>{plant.name}</span>
+            <RagDot status={rag} size={10} />
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-function KpiStatusSection({ kpis, plantKpiData, selectedPlant, setKpiData }) {
+function PlantHeaderCard({ plant, selectedWeek, prevWeek }) {
+  const rag   = plantRag(selectedWeek?.kpiData, plant.id);
+  const trend = plantTrend(selectedWeek, prevWeek, plant.id);
+  const trendInfo = TREND_LABEL[trend];
+
+  const red   = countRag(selectedWeek?.kpiData, plant.id, 'red');
+  const amber = countRag(selectedWeek?.kpiData, plant.id, 'amber');
+  const green = countRag(selectedWeek?.kpiData, plant.id, 'green');
+
   return (
-    <SectionCard title="KPI Status — Click to Update">
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
-        gap: 12,
-      }}>
-        {kpis.map(kpi => {
-          const status = plantKpiData[kpi.id] || 'green';
-          const statusText = ragStatusText(kpi, status);
-          return (
-            <div
-              key={kpi.id}
+    <GlassCard className="p-6 mb-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        {/* Left: flag + name */}
+        <div className="flex items-center gap-4">
+          <span style={{ fontSize: 48, lineHeight: 1 }}>{plant.flag}</span>
+          <div>
+            <div className="text-2xl font-black text-white tracking-wide">{plant.name}</div>
+            <div className="text-slate-400 text-sm">{plant.countryName}</div>
+          </div>
+        </div>
+
+        {/* Right: RAG + week */}
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400">{selectedWeek?.week} · {selectedWeek?.label}</span>
+            <span
+              className="px-3 py-1 rounded-full text-sm font-black"
               style={{
-                background: ragCardTint(status),
-                border: `1px solid rgba(255,255,255,0.08)`,
-                borderLeft: `4px solid ${ragLeftBorderColor(status)}`,
-                borderRadius: 12,
-                padding: '14px 14px 12px',
-                backdropFilter: 'blur(12px)',
-                transition: 'all 0.15s ease',
+                background: RAG[rag]?.light,
+                border: `2px solid ${RAG[rag]?.border}`,
+                color: RAG[rag]?.text,
+                boxShadow: `0 0 16px ${RAG[rag]?.glow}`,
               }}
             >
-              {/* Label + RagSelect in a row */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: '#e2e8f0', lineHeight: 1.2 }}>
-                  {kpi.short}
-                </span>
-                <RagSelect
-                  value={status}
-                  onChange={newVal =>
-                    setKpiData(prev => ({
-                      ...prev,
-                      [selectedPlant]: {
-                        ...prev[selectedPlant],
-                        [kpi.id]: newVal,
-                      },
-                    }))
-                  }
-                />
-              </div>
+              <RagDot status={rag} size={10} /> {RAG[rag]?.label}
+            </span>
+          </div>
 
-              {/* Threshold text */}
-              <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 600, color: ragStatusTextColor(status), lineHeight: 1.4 }}>
-                {statusText}
-              </p>
-
-              {/* Description */}
-              <p style={{ margin: 0, fontSize: 11, color: '#64748b', lineHeight: 1.5 }}>
-                {kpi.description}
-              </p>
-            </div>
-          );
-        })}
-      </div>
-    </SectionCard>
-  );
-}
-
-function MeasuresSection({ measures, plantMeasuresData, selectedPlant, setMeasuresData }) {
-  // Group by status
-  const grouped = { active: [], planned: [], inactive: [] };
-  for (const m of measures) {
-    const s = plantMeasuresData[m.id] || 'inactive';
-    if (grouped[s]) grouped[s].push(m);
-    else grouped.inactive.push(m);
-  }
-
-  return (
-    <SectionCard title="Mitigation Measures — Click to Update">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-        {MEASURE_GROUP_ORDER.map(group => {
-          const items = grouped[group];
-          if (items.length === 0) return null;
-
-          const groupColor = group === 'active' ? '#86efac' : group === 'planned' ? '#fcd34d' : '#64748b';
-          const groupBorderColor = group === 'active' ? 'rgba(22,163,74,0.4)' : group === 'planned' ? 'rgba(217,119,6,0.4)' : 'rgba(100,116,139,0.3)';
-
-          return (
-            <div key={group}>
-              {/* Group header */}
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                marginBottom: 8,
-                paddingBottom: 6,
-                borderBottom: `1px solid rgba(255,255,255,0.06)`,
-              }}>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: groupColor, display: 'inline-block' }} />
-                <span style={{ fontSize: 10, fontWeight: 800, color: groupColor, textTransform: 'uppercase', letterSpacing: '0.12em' }}>
-                  {MEASURE_GROUP_LABELS[group]}
-                </span>
-                <span style={{ fontSize: 10, color: '#475569', marginLeft: 2 }}>({items.length})</span>
-              </div>
-
-              {/* Measure rows */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {items.map(measure => {
-                  const currentStatus = plantMeasuresData[measure.id] || 'inactive';
-                  return (
-                    <div
-                      key={measure.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                        padding: '10px 14px',
-                        borderRadius: 10,
-                        background: 'rgba(255,255,255,0.03)',
-                        border: '1px solid rgba(255,255,255,0.07)',
-                        transition: 'background 0.15s ease',
-                      }}
-                    >
-                      {/* Left: label + description */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 3 }}>
-                          <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>
-                            {measure.label}
-                          </span>
-                          <MeasureStatusBadge status={currentStatus} />
-                        </div>
-                        <p style={{ margin: 0, fontSize: 11, color: '#475569', lineHeight: 1.5 }}>
-                          {measure.description}
-                        </p>
-                      </div>
-
-                      {/* Right: MeasureSelect */}
-                      <div style={{ flexShrink: 0 }}>
-                        <MeasureSelect
-                          value={currentStatus}
-                          onChange={newVal =>
-                            setMeasuresData(prev => ({
-                              ...prev,
-                              [selectedPlant]: {
-                                ...prev[selectedPlant],
-                                [measure.id]: newVal,
-                              },
-                            }))
-                          }
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </SectionCard>
-  );
-}
-
-function PlantNotesSection({ selectedPlant, plantNote, setPlantNotes }) {
-  const [modified, setModified] = useState(false);
-
-  function handleChange(e) {
-    const val = e.target.value;
-    setPlantNotes(prev => ({ ...prev, [selectedPlant]: val }));
-    if (!modified) setModified(true);
-  }
-
-  const meta = PLANT_META[selectedPlant] || {};
-
-  return (
-    <SectionCard title="Plant Notes">
-      <div>
-        <textarea
-          value={plantNote}
-          onChange={handleChange}
-          placeholder={`Enter notes for ${selectedPlant} (${meta.countryName || ''})…`}
-          rows={5}
-          style={{
-            width: '100%',
-            background: 'rgba(255,255,255,0.08)',
-            border: '1px solid rgba(255,255,255,0.15)',
-            borderRadius: 8,
-            padding: '12px 14px',
-            fontSize: 13,
-            color: 'white',
-            lineHeight: 1.6,
-            resize: 'vertical',
-            outline: 'none',
-            boxSizing: 'border-box',
-            fontFamily: 'inherit',
-            transition: 'border-color 0.15s ease',
-          }}
-          onFocus={e => { e.target.style.borderColor = 'rgba(99,179,237,0.5)'; }}
-          onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.15)'; }}
-        />
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
-          {modified ? (
-            <span style={{ fontSize: 11, color: '#16a34a' }}>Last modified this session</span>
+          {/* Status badge */}
+          {selectedWeek?.status === 'forecast' ? (
+            <span
+              className="px-2.5 py-1 rounded-full text-xs font-semibold"
+              style={{ background: 'rgba(217,119,6,0.15)', border: '1px solid rgba(217,119,6,0.35)', color: '#fcd34d' }}
+            >
+              📋 Forecast Data
+            </span>
           ) : (
-            <span style={{ fontSize: 11, color: '#475569' }}>
-              Record latest status, actions taken, and any escalations for {selectedPlant}.
+            <span
+              className="px-2.5 py-1 rounded-full text-xs font-semibold"
+              style={{ background: 'rgba(22,163,74,0.15)', border: '1px solid rgba(22,163,74,0.35)', color: '#86efac' }}
+            >
+              ✅ Actual Data
             </span>
           )}
-          <span style={{ fontSize: 11, color: '#475569', fontVariantNumeric: 'tabular-nums' }}>
-            {plantNote.length} chars
-          </span>
         </div>
+      </div>
+
+      {/* KPI count pills + trend */}
+      <div className="flex flex-wrap items-center gap-3 mt-4 pt-4" style={{ borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+        <span
+          className="px-2.5 py-1 rounded-full text-xs font-bold"
+          style={{ background: 'rgba(220,38,38,0.15)', border: '1px solid rgba(220,38,38,0.3)', color: '#fca5a5' }}
+        >
+          🔴 {red} Red
+        </span>
+        <span
+          className="px-2.5 py-1 rounded-full text-xs font-bold"
+          style={{ background: 'rgba(217,119,6,0.15)', border: '1px solid rgba(217,119,6,0.3)', color: '#fcd34d' }}
+        >
+          🟡 {amber} Amber
+        </span>
+        <span
+          className="px-2.5 py-1 rounded-full text-xs font-bold"
+          style={{ background: 'rgba(22,163,74,0.15)', border: '1px solid rgba(22,163,74,0.3)', color: '#86efac' }}
+        >
+          🟢 {green} Green
+        </span>
+
+        <span className="text-slate-500 text-xs">|</span>
+
+        <span className="text-xs font-bold" style={{ color: trendInfo.color }}>
+          {trendInfo.text} vs previous week
+        </span>
+
+        <span className="text-xs text-slate-500">
+          Top risk: {topRisk(selectedWeek?.kpiData, [], plant.id) !== 'None'
+            ? topRisk(selectedWeek?.kpiData, [], plant.id)
+            : 'None'}
+        </span>
+      </div>
+    </GlassCard>
+  );
+}
+
+function KpiCard({ kpi, plantId, selectedWeek, prevWeek, updateKpi }) {
+  const status = (selectedWeek?.kpiData?.[plantId] || {})[kpi.id] || 'green';
+  const trend  = kpiTrend(selectedWeek, prevWeek, plantId, kpi.id);
+  const trendInfo = TREND_LABEL[trend];
+
+  // Threshold text by current status
+  const thresholdMap = {
+    red:   kpi.red,
+    amber: kpi.amber,
+    green: kpi.green,
+  };
+  const thresholdText = thresholdMap[status] || '';
+
+  return (
+    <div
+      className="rounded-xl p-4 flex flex-col gap-2"
+      style={{
+        background: 'rgba(255,255,255,0.04)',
+        border: '1px solid rgba(255,255,255,0.07)',
+        borderLeft: `4px solid ${RAG[status]?.bg || RAG.green.bg}`,
+      }}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-white font-bold text-xs leading-tight">{kpi.short}</span>
+        <RagSelect
+          value={status}
+          onChange={val => updateKpi(plantId, kpi.id, val)}
+        />
+      </div>
+
+      {thresholdText && (
+        <div className="text-xs font-medium" style={{ color: RAG[status]?.text }}>
+          {thresholdText}
+        </div>
+      )}
+
+      <div className="text-slate-400 text-xs leading-snug">{kpi.description}</div>
+
+      <div className="text-xs font-bold" style={{ color: trendInfo.color }}>
+        {trendInfo.text}
+      </div>
+    </div>
+  );
+}
+
+function KpiPanel({ kpis, plantId, selectedWeek, prevWeek, updateKpi }) {
+  return (
+    <SectionCard
+      title={`KPI Status — ${selectedWeek?.week || ''}`}
+      headerRight={<span className="text-slate-500 text-xs">✏️ Inline editing</span>}
+    >
+      <div className="grid grid-cols-2 gap-3">
+        {kpis.map(kpi => (
+          <KpiCard
+            key={kpi.id}
+            kpi={kpi}
+            plantId={plantId}
+            selectedWeek={selectedWeek}
+            prevWeek={prevWeek}
+            updateKpi={updateKpi}
+          />
+        ))}
       </div>
     </SectionCard>
   );
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+function MeasureRow({ measure, plantId, selectedWeek, updateMeasure }) {
+  const status = (selectedWeek?.measuresData?.[plantId] || {})[measure.id] || 'inactive';
+  return (
+    <div
+      className="flex flex-col gap-2 rounded-xl p-3"
+      style={{
+        background: 'rgba(255,255,255,0.04)',
+        border: '1px solid rgba(255,255,255,0.06)',
+      }}
+    >
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-white text-xs font-semibold">{measure.label}</span>
+        <MeasureSelect
+          value={status}
+          onChange={val => updateMeasure(plantId, measure.id, val)}
+        />
+      </div>
+      <div className="text-slate-400 text-xs leading-snug">{measure.description}</div>
+    </div>
+  );
+}
+
+const MEASURE_STATUS_ORDER = ['active', 'planned', 'inactive'];
+const MEASURE_GROUP_LABELS = {
+  active:   { label: 'Active',   color: '#86efac', bg: 'rgba(22,163,74,0.12)',   border: 'rgba(22,163,74,0.25)'   },
+  planned:  { label: 'Planned',  color: '#fcd34d', bg: 'rgba(217,119,6,0.12)',   border: 'rgba(217,119,6,0.25)'   },
+  inactive: { label: 'Inactive', color: '#475569', bg: 'rgba(100,116,139,0.08)', border: 'rgba(100,116,139,0.2)'  },
+};
+
+function MeasuresPanel({ measures, plantId, selectedWeek, updateMeasure }) {
+  const grouped = MEASURE_STATUS_ORDER.reduce((acc, s) => {
+    acc[s] = measures.filter(m => ((selectedWeek?.measuresData?.[plantId] || {})[m.id] || 'inactive') === s);
+    return acc;
+  }, {});
+
+  return (
+    <SectionCard
+      title={`Measures — ${selectedWeek?.week || ''}`}
+      headerRight={<span className="text-slate-500 text-xs">✏️ Inline editing</span>}
+    >
+      <div className="flex flex-col gap-4">
+        {MEASURE_STATUS_ORDER.map(s => {
+          const group = grouped[s];
+          if (!group.length) return null;
+          const cfg = MEASURE_GROUP_LABELS[s];
+          return (
+            <div key={s}>
+              <div
+                className="text-xs font-bold px-2 py-1 rounded-lg mb-2 inline-block"
+                style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.color }}
+              >
+                {cfg.label} ({group.length})
+              </div>
+              <div className="flex flex-col gap-2">
+                {group.map(m => (
+                  <MeasureRow
+                    key={m.id}
+                    measure={m}
+                    plantId={plantId}
+                    selectedWeek={selectedWeek}
+                    updateMeasure={updateMeasure}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </SectionCard>
+  );
+}
+
+function NotesSection({ plant, selectedWeek, selectedPlant, updateNote }) {
+  const note = selectedWeek?.plantNotes?.[selectedPlant] || '';
+  return (
+    <GlassCard className="p-5 mt-5">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-xs font-bold text-slate-300 uppercase tracking-widest">
+          Plant Notes — {plant?.name} — {selectedWeek?.week}
+        </h2>
+        <span className="text-xs text-slate-500">Auto-saved</span>
+      </div>
+
+      <textarea
+        value={note}
+        onChange={e => updateNote(selectedPlant, e.target.value)}
+        rows={4}
+        placeholder="Enter plant-specific notes for this week…"
+        className="w-full text-sm text-white placeholder-slate-600 rounded-xl px-4 py-3 resize-none outline-none"
+        style={{
+          background: 'rgba(255,255,255,0.05)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          backdropFilter: 'blur(12px)',
+          lineHeight: 1.6,
+        }}
+      />
+
+      <div className="flex items-center justify-between mt-2">
+        <span className="text-xs text-slate-600">💾 Note is saved automatically</span>
+        <span className="text-xs text-slate-600">{note.length} characters</span>
+      </div>
+    </GlassCard>
+  );
+}
+
+function HistoryPanel({ plant, plants, kpis, kpiHistory, selectedWeekIdx }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <GlassCard className="mt-5">
+      {/* Header / toggle */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-5 py-4"
+        style={{ borderBottom: open ? '1px solid rgba(255,255,255,0.07)' : 'none' }}
+      >
+        <span className="text-xs font-bold text-slate-300 uppercase tracking-widest">
+          KPI History — {plant?.name}
+        </span>
+        <span className="text-slate-400 text-xs font-semibold">
+          {open ? '▲ Collapse' : '▼ Expand'}
+        </span>
+      </button>
+
+      {open && (
+        <div className="p-5">
+          {/* Overall RAG timeline */}
+          <div className="mb-5">
+            <div className="text-xs text-slate-400 font-semibold mb-2 uppercase tracking-wider">
+              Plant Overall RAG — All Weeks
+            </div>
+            <div className="flex items-end gap-1 overflow-x-auto pb-1">
+              {kpiHistory.map((wk, wi) => {
+                const rag = plantRag(wk.kpiData, plant.id);
+                const isSelected = wi === selectedWeekIdx;
+                return (
+                  <div key={wk.week} className="flex flex-col items-center gap-1 shrink-0">
+                    <div
+                      className="w-8 rounded-t-md"
+                      style={{
+                        height: 28,
+                        background: RAG[rag]?.bg,
+                        boxShadow: isSelected ? `0 0 10px ${RAG[rag]?.glow}` : 'none',
+                        opacity: wk.status === 'forecast' ? 0.55 : 1,
+                        border: isSelected ? `2px solid ${RAG[rag]?.border}` : '2px solid transparent',
+                      }}
+                    />
+                    <span
+                      className="text-xs"
+                      style={{
+                        color: isSelected ? '#93c5fd' : '#475569',
+                        fontWeight: isSelected ? 700 : 400,
+                        fontSize: 10,
+                      }}
+                    >
+                      {wk.week}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* KPI grid table */}
+          <div className="text-xs text-slate-400 font-semibold mb-2 uppercase tracking-wider">
+            Individual KPIs — All Weeks
+          </div>
+          <div className="overflow-x-auto rounded-xl" style={{ border: '1px solid rgba(255,255,255,0.07)' }}>
+            <table className="w-full text-xs border-collapse" style={{ minWidth: 900 }}>
+              <thead>
+                <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
+                  <th
+                    className="text-left px-3 py-2 text-slate-400 font-semibold sticky left-0"
+                    style={{ background: 'rgba(10,15,30,0.85)', minWidth: 130, zIndex: 1 }}
+                  >
+                    KPI
+                  </th>
+                  {kpiHistory.map((wk, wi) => {
+                    const isSelected = wi === selectedWeekIdx;
+                    return (
+                      <th
+                        key={wk.week}
+                        className="px-2 py-2 font-semibold text-center"
+                        style={{
+                          color: isSelected ? '#93c5fd' : wk.status === 'forecast' ? '#475569' : '#64748b',
+                          fontWeight: isSelected ? 700 : wk.status === 'actual' ? 600 : 400,
+                          background: isSelected ? 'rgba(59,130,246,0.1)' : 'transparent',
+                          minWidth: 40,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {wk.week}
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {/* Overall RAG row */}
+                <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+                  <td
+                    className="px-3 py-2 font-bold text-white sticky left-0"
+                    style={{ background: 'rgba(10,15,30,0.85)', zIndex: 1 }}
+                  >
+                    Overall
+                  </td>
+                  {kpiHistory.map((wk, wi) => {
+                    const rag = plantRag(wk.kpiData, plant.id);
+                    const isSelected = wi === selectedWeekIdx;
+                    return (
+                      <td
+                        key={wk.week}
+                        className="text-center py-2"
+                        style={{ background: isSelected ? 'rgba(59,130,246,0.1)' : 'transparent' }}
+                      >
+                        <div className="flex justify-center">
+                          <RagDot
+                            status={rag}
+                            size={wk.status === 'forecast' ? 8 : 10}
+                          />
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+
+                {/* One row per KPI */}
+                {kpis.map((kpi, ki) => (
+                  <tr
+                    key={kpi.id}
+                    style={{
+                      background: ki % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)',
+                      borderBottom: '1px solid rgba(255,255,255,0.04)',
+                    }}
+                  >
+                    <td
+                      className="px-3 py-2 text-slate-300 sticky left-0"
+                      style={{ background: ki % 2 === 0 ? 'rgba(10,15,30,0.85)' : 'rgba(13,18,35,0.9)', zIndex: 1 }}
+                    >
+                      {kpi.short}
+                    </td>
+                    {kpiHistory.map((wk, wi) => {
+                      const cellStatus = (wk.kpiData?.[plant.id] || {})[kpi.id] || 'green';
+                      const isSelected = wi === selectedWeekIdx;
+                      return (
+                        <td
+                          key={wk.week}
+                          className="text-center py-2"
+                          style={{ background: isSelected ? 'rgba(59,130,246,0.1)' : 'transparent' }}
+                        >
+                          <div className="flex justify-center" style={{ opacity: wk.status === 'forecast' ? 0.6 : 1 }}>
+                            <RagDot status={cellStatus} size={8} />
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Legend */}
+          <div className="flex items-center gap-4 mt-3 text-xs text-slate-500">
+            <span className="font-semibold">Legend:</span>
+            <span>Bold column header = Actual week</span>
+            <span>Dimmed dots = Forecast</span>
+            <span style={{ color: '#93c5fd' }}>Blue highlight = Selected week</span>
+          </div>
+        </div>
+      )}
+    </GlassCard>
+  );
+}
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function PlantDetailPage({
-  plants, kpis, measures,
-  kpiData, setKpiData,
-  measuresData, setMeasuresData,
-  plantNotes, setPlantNotes,
-  plantTrends, setPlantTrends,
+  plants,
+  kpis,
+  measures,
+  kpiHistory,
+  selectedWeek,
+  prevWeek,
+  selectedWeekIdx,
+  setSelectedWeekIdx,
+  updateKpi,
+  updateMeasure,
+  updateNote,
 }) {
   const [selectedPlant, setSelectedPlant] = useState('RBID');
 
-  const meta           = PLANT_META[selectedPlant] || {};
-  const overallRag     = plantOverallRag(kpiData, selectedPlant);
-  const trend          = plantTrends[selectedPlant] || 'stable';
-  const plantKpiData   = kpiData[selectedPlant] || {};
-  const plantMeasuresData = measuresData[selectedPlant] || {};
-  const plantNote      = plantNotes[selectedPlant] || '';
+  const plant = plants?.find(p => p.id === selectedPlant) || plants?.[0];
 
-  const redCount   = countRedKpis(kpiData, selectedPlant);
-  const amberCount = countAmberKpis(kpiData, selectedPlant);
-  const greenCount = Object.values(plantKpiData).filter(v => v === 'green').length;
-
-  function handleTrendChange(newTrend) {
-    setPlantTrends(prev => ({ ...prev, [selectedPlant]: newTrend }));
+  if (!plant || !selectedWeek) {
+    return <div className="text-slate-400 p-8">Loading plant data…</div>;
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div>
+      {/* Top bar */}
+      <TopBar
+        kpiHistory={kpiHistory}
+        selectedWeekIdx={selectedWeekIdx}
+        setSelectedWeekIdx={setSelectedWeekIdx}
+        selectedWeek={selectedWeek}
+      />
 
-      {/* Plant Selector */}
-      <PlantSelectorBar
+      {/* Plant selector pills */}
+      <PlantSelector
         plants={plants}
         selectedPlant={selectedPlant}
-        onSelect={setSelectedPlant}
-        kpiData={kpiData}
+        setSelectedPlant={setSelectedPlant}
+        selectedWeek={selectedWeek}
       />
 
-      {/* Plant Header Card */}
+      {/* Plant header */}
       <PlantHeaderCard
-        selectedPlant={selectedPlant}
-        meta={meta}
-        overallRag={overallRag}
-        redCount={redCount}
-        amberCount={amberCount}
-        greenCount={greenCount}
-        trend={trend}
-        onTrendChange={handleTrendChange}
-        plantNote={plantNote}
+        plant={plant}
+        selectedWeek={selectedWeek}
+        prevWeek={prevWeek}
       />
 
-      {/* KPI Status — Inline Editing */}
-      <KpiStatusSection
+      {/* Two-column: KPIs + Measures */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <KpiPanel
+          kpis={kpis}
+          plantId={selectedPlant}
+          selectedWeek={selectedWeek}
+          prevWeek={prevWeek}
+          updateKpi={updateKpi}
+        />
+        <MeasuresPanel
+          measures={measures}
+          plantId={selectedPlant}
+          selectedWeek={selectedWeek}
+          updateMeasure={updateMeasure}
+        />
+      </div>
+
+      {/* Notes */}
+      <NotesSection
+        plant={plant}
+        selectedWeek={selectedWeek}
+        selectedPlant={selectedPlant}
+        updateNote={updateNote}
+      />
+
+      {/* History panel */}
+      <HistoryPanel
+        plant={plant}
+        plants={plants}
         kpis={kpis}
-        plantKpiData={plantKpiData}
-        selectedPlant={selectedPlant}
-        setKpiData={setKpiData}
+        kpiHistory={kpiHistory}
+        selectedWeekIdx={selectedWeekIdx}
       />
-
-      {/* Measures — Inline Editing */}
-      <MeasuresSection
-        measures={measures}
-        plantMeasuresData={plantMeasuresData}
-        selectedPlant={selectedPlant}
-        setMeasuresData={setMeasuresData}
-      />
-
-      {/* Plant Notes */}
-      <PlantNotesSection
-        selectedPlant={selectedPlant}
-        plantNote={plantNote}
-        setPlantNotes={setPlantNotes}
-      />
-
     </div>
   );
 }

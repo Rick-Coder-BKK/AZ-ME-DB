@@ -1,578 +1,713 @@
 import { useState } from 'react';
 import {
-  RagDot, RagBadge, RagSelect, SectionCard, GlassCard, Card,
-  plantOverallRag, countRedKpis, countAmberKpis,
+  RagDot, RagBadge, RagSelect, GlassCard, Card, SectionCard,
+  WeekSelector, RAG, plantRag, countRag, severityScore, weekTrend,
 } from '../components/shared';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
+// ── Constants ──────────────────────────────────────────────────
 const COUNTRIES = [
-  { code: 'ALL', label: 'All',       flag: null },
-  { code: 'TH',  label: 'Thailand',  flag: '🇹🇭' },
-  { code: 'MY',  label: 'Malaysia',  flag: '🇲🇾' },
-  { code: 'VN',  label: 'Vietnam',   flag: '🇻🇳' },
-  { code: 'ID',  label: 'Indonesia', flag: '🇮🇩' },
+  { code: 'ALL', label: 'All',  flag: null },
+  { code: 'TH',  label: 'TH',  flag: '🇹🇭' },
+  { code: 'MY',  label: 'MY',  flag: '🇲🇾' },
+  { code: 'VN',  label: 'VN',  flag: '🇻🇳' },
+  { code: 'ID',  label: 'ID',  flag: '🇮🇩' },
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+const DELTA_MAP = {
+  'red-red':     { arrow: '→', color: '#fca5a5' },
+  'red-amber':   { arrow: '↑', color: '#86efac' },
+  'red-green':   { arrow: '↑', color: '#86efac' },
+  'amber-red':   { arrow: '↓', color: '#fca5a5' },
+  'amber-amber': { arrow: '→', color: '#fcd34d' },
+  'amber-green': { arrow: '↑', color: '#86efac' },
+  'green-red':   { arrow: '↓', color: '#fca5a5' },
+  'green-amber': { arrow: '↓', color: '#fca5a5' },
+  'green-green': { arrow: '→', color: '#86efac' },
+};
 
-function worstStatus(statuses) {
-  if (statuses.includes('red'))   return 'red';
-  if (statuses.includes('amber')) return 'amber';
-  return 'green';
+function getDelta(prev, cur) {
+  const key = `${prev}-${cur}`;
+  return DELTA_MAP[key] || { arrow: '→', color: '#64748b' };
 }
 
-function kpiSummaries(kpis, plants, kpiData) {
-  return kpis.map(kpi => {
-    const statuses = plants.map(p => (kpiData[p.id] || {})[kpi.id] || 'green');
-    return {
-      kpiId: kpi.id,
-      worst: worstStatus(statuses),
-      red:   statuses.filter(s => s === 'red').length,
-      amber: statuses.filter(s => s === 'amber').length,
-      green: statuses.filter(s => s === 'green').length,
-    };
-  });
+// ── Compact RAG block for history chart ───────────────────────
+function RagBlock({ status, isSelected, isForecast, width = 28 }) {
+  const c = RAG[status] || RAG.green;
+  return (
+    <span
+      title={status}
+      style={{
+        display: 'inline-block',
+        width,
+        height: 20,
+        borderRadius: 3,
+        background: c.bg,
+        opacity: isForecast ? 0.45 : 1,
+        outline: isSelected ? `2px solid white` : 'none',
+        outlineOffset: 1,
+        flexShrink: 0,
+        cursor: 'default',
+        boxShadow: isSelected ? `0 0 8px ${c.glow}` : undefined,
+      }}
+    />
+  );
 }
 
-function computeHeatmapStats(kpis, plants, kpiData) {
-  let totalRed = 0, totalAmber = 0, totalGreen = 0;
-  const kpiRedCounts   = {};
-  const plantRedCounts = {};
+// ── Per-KPI summary card ───────────────────────────────────────
+function KpiSummaryCard({ kpi, kpiData, plants, prevKpiData, isSelected, onClick }) {
+  const counts = { red: 0, amber: 0, green: 0 };
+  for (const p of plants) {
+    const v = (kpiData?.[p.id] || {})[kpi.id] || 'green';
+    counts[v]++;
+  }
+  const worst = counts.red > 0 ? 'red' : counts.amber > 0 ? 'amber' : 'green';
 
-  for (const plant of plants) {
-    plantRedCounts[plant.id] = 0;
-    for (const kpi of kpis) {
-      kpiRedCounts[kpi.id] = kpiRedCounts[kpi.id] || 0;
-      const s = (kpiData[plant.id] || {})[kpi.id] || 'green';
-      if (s === 'red')   { totalRed++;   kpiRedCounts[kpi.id]++;   plantRedCounts[plant.id]++; }
-      if (s === 'amber') totalAmber++;
-      if (s === 'green') totalGreen++;
+  // trend for this KPI across all plants
+  let trendArrow = '→';
+  let trendColor = '#fcd34d';
+  if (prevKpiData) {
+    let curScore = 0, prevScore = 0;
+    for (const p of plants) {
+      const cur  = (kpiData?.[p.id]     || {})[kpi.id] || 'green';
+      const prev = (prevKpiData?.[p.id] || {})[kpi.id] || 'green';
+      const val  = v => v === 'red' ? 3 : v === 'amber' ? 1 : 0;
+      curScore  += val(cur);
+      prevScore += val(prev);
     }
+    if (curScore > prevScore) { trendArrow = '↓'; trendColor = '#fca5a5'; }
+    else if (curScore < prevScore) { trendArrow = '↑'; trendColor = '#86efac'; }
+    else { trendArrow = '→'; trendColor = '#fcd34d'; }
   }
 
-  const criticalKpiId   = Object.entries(kpiRedCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
-  const criticalPlantId = Object.entries(plantRedCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
-  const criticalKpi     = kpis.find(k => k.id === criticalKpiId);
-  const criticalPlant   = plants.find(p => p.id === criticalPlantId);
-
-  return {
-    totalRed, totalAmber, totalGreen,
-    criticalKpiLabel:   criticalKpi   ? `${criticalKpi.short} (${kpiRedCounts[criticalKpiId]} red)` : '—',
-    criticalPlantLabel: criticalPlant ? `${criticalPlant.flag || ''} ${criticalPlant.name} (${plantRedCounts[criticalPlantId]} red)` : '—',
-  };
-}
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function FilterBar({ active, onChange }) {
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-      {COUNTRIES.map(c => {
-        const isActive = active === c.code;
-        return (
-          <button
-            key={c.code}
-            onClick={() => onChange(c.code)}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 5,
-              padding: '6px 16px',
-              borderRadius: 999,
-              fontSize: 12,
-              fontWeight: isActive ? 700 : 500,
-              cursor: 'pointer',
-              transition: 'all 0.15s ease',
-              border: isActive ? '1px solid rgba(99,179,237,0.6)' : '1px solid rgba(255,255,255,0.12)',
-              background: isActive ? 'rgba(99,179,237,0.18)' : 'rgba(255,255,255,0.05)',
-              color: isActive ? '#93c5fd' : '#94a3b8',
-              boxShadow: isActive ? '0 0 10px rgba(99,179,237,0.25)' : 'none',
-            }}
-          >
-            {c.flag && <span style={{ fontSize: 14 }}>{c.flag}</span>}
-            {c.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function SummaryHeaderRow({ kpis, summaries }) {
-  return (
-    <SectionCard title="KPI Summary — All Plants">
-      <div style={{ overflowX: 'auto' }}>
-        <div style={{ display: 'flex', gap: 8, minWidth: 'max-content', paddingBottom: 4 }}>
-          {kpis.map((kpi, i) => {
-            const s = summaries[i];
-            const worstColor = s.worst === 'red' ? '#dc2626' : s.worst === 'amber' ? '#d97706' : '#16a34a';
-            const worstTint  = s.worst === 'red' ? 'rgba(220,38,38,0.1)' : s.worst === 'amber' ? 'rgba(217,119,6,0.1)' : 'rgba(22,163,74,0.1)';
-            return (
-              <div
-                key={kpi.id}
-                style={{
-                  minWidth: 90,
-                  padding: '10px 10px 8px',
-                  borderRadius: 10,
-                  background: worstTint,
-                  border: `1px solid ${worstColor}44`,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: 5,
-                }}
-              >
-                <span style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textAlign: 'center', lineHeight: 1.2 }}>
-                  {kpi.short}
-                </span>
-                <RagDot status={s.worst} size="md" />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 1, width: '100%', alignItems: 'center' }}>
-                  {s.red > 0 && (
-                    <span style={{ fontSize: 9, color: '#fca5a5', fontWeight: 700 }}>{s.red}R</span>
-                  )}
-                  {s.amber > 0 && (
-                    <span style={{ fontSize: 9, color: '#fcd34d', fontWeight: 700 }}>{s.amber}A</span>
-                  )}
-                  {s.green > 0 && (
-                    <span style={{ fontSize: 9, color: '#86efac', fontWeight: 700 }}>{s.green}G</span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </SectionCard>
-  );
-}
-
-function KPIMatrix({ plants, kpis, kpiData, setKpiData, summaries }) {
-  // Compact RagSelect for matrix cells — just shows a colored square that opens a select
-  function CellSelect({ plantId, kpiId }) {
-    const status = (kpiData[plantId] || {})[kpiId] || 'green';
-    const bgColor = status === 'red' ? 'rgba(220,38,38,0.25)' : status === 'amber' ? 'rgba(217,119,6,0.25)' : 'rgba(22,163,74,0.25)';
-    const borderColor = status === 'red' ? 'rgba(220,38,38,0.6)' : status === 'amber' ? 'rgba(217,119,6,0.6)' : 'rgba(22,163,74,0.6)';
-    const dotColor = status === 'red' ? '#dc2626' : status === 'amber' ? '#d97706' : '#16a34a';
-
-    return (
-      <select
-        value={status}
-        onChange={e =>
-          setKpiData(prev => ({
-            ...prev,
-            [plantId]: {
-              ...prev[plantId],
-              [kpiId]: e.target.value,
-            },
-          }))
-        }
-        title={`${plantId} · ${kpiId}: ${status}`}
-        style={{
-          appearance: 'none',
-          WebkitAppearance: 'none',
-          width: 26,
-          height: 26,
-          borderRadius: 6,
-          border: `1px solid ${borderColor}`,
-          background: bgColor,
-          cursor: 'pointer',
-          outline: 'none',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: 0,
-          color: 'transparent',
-          backgroundImage: `radial-gradient(circle at 50% 50%, ${dotColor} 38%, transparent 38%)`,
-          boxShadow: `0 0 6px ${dotColor}55`,
-        }}
-      >
-        <option value="green">Green</option>
-        <option value="amber">Amber</option>
-        <option value="red">Red</option>
-      </select>
-    );
-  }
-
-  const headerBg = 'rgba(15,23,42,0.85)';
-
-  return (
-    <SectionCard title="KPI Matrix — Inline Editing">
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ borderCollapse: 'collapse', minWidth: '100%', tableLayout: 'auto' }}>
-          <colgroup>
-            <col style={{ minWidth: 170 }} />
-            {kpis.map(k => <col key={k.id} style={{ minWidth: 44 }} />)}
-          </colgroup>
-
-          <thead>
-            <tr>
-              {/* Plant column header */}
-              <th
-                style={{
-                  position: 'sticky',
-                  left: 0,
-                  zIndex: 10,
-                  background: headerBg,
-                  backdropFilter: 'blur(20px)',
-                  padding: '10px 14px',
-                  textAlign: 'left',
-                  fontSize: 10,
-                  fontWeight: 700,
-                  color: '#64748b',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.1em',
-                  borderBottom: '1px solid rgba(255,255,255,0.08)',
-                  borderRight: '1px solid rgba(255,255,255,0.08)',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                Plant
-              </th>
-
-              {/* KPI column headers — rotated short names */}
-              {kpis.map((kpi, i) => {
-                const s = summaries[i];
-                return (
-                  <th
-                    key={kpi.id}
-                    style={{
-                      background: headerBg,
-                      backdropFilter: 'blur(20px)',
-                      padding: '8px 4px',
-                      textAlign: 'center',
-                      verticalAlign: 'bottom',
-                      borderBottom: '1px solid rgba(255,255,255,0.08)',
-                    }}
-                    title={kpi.label}
-                  >
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                      <span
-                        style={{
-                          writingMode: 'vertical-rl',
-                          transform: 'rotate(180deg)',
-                          fontSize: 9,
-                          fontWeight: 700,
-                          color: '#64748b',
-                          whiteSpace: 'nowrap',
-                          maxHeight: 72,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.05em',
-                        }}
-                      >
-                        {kpi.short}
-                      </span>
-                      <RagDot status={s.worst} size="sm" />
-                    </div>
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-
-          <tbody>
-            {plants.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={kpis.length + 1}
-                  style={{
-                    textAlign: 'center',
-                    padding: '32px 0',
-                    fontSize: 13,
-                    color: '#475569',
-                    fontStyle: 'italic',
-                  }}
-                >
-                  No plants match the selected filter.
-                </td>
-              </tr>
-            ) : (
-              plants.map((plant, rowIdx) => {
-                const overall = plantOverallRag(kpiData, plant.id);
-                const rowBg = rowIdx % 2 === 0
-                  ? 'rgba(255,255,255,0.02)'
-                  : 'rgba(255,255,255,0.04)';
-                const stickyBg = rowIdx % 2 === 0
-                  ? 'rgba(15,23,42,0.9)'
-                  : 'rgba(20,28,50,0.92)';
-
-                return (
-                  <tr key={plant.id} style={{ background: rowBg }}>
-                    {/* Plant name — sticky */}
-                    <td
-                      style={{
-                        position: 'sticky',
-                        left: 0,
-                        zIndex: 5,
-                        background: stickyBg,
-                        backdropFilter: 'blur(20px)',
-                        padding: '8px 14px',
-                        borderRight: '1px solid rgba(255,255,255,0.06)',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontSize: 16, lineHeight: 1 }}>{plant.flag}</span>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>{plant.name}</span>
-                        <RagBadge status={overall} />
-                      </div>
-                    </td>
-
-                    {/* KPI cells — each is a CellSelect */}
-                    {kpis.map(kpi => (
-                      <td
-                        key={kpi.id}
-                        style={{
-                          padding: '6px 8px',
-                          textAlign: 'center',
-                          verticalAlign: 'middle',
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <CellSelect plantId={plant.id} kpiId={kpi.id} />
-                        </div>
-                      </td>
-                    ))}
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Legend */}
-      <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center' }}>
-        {[
-          { color: '#dc2626', label: 'Red — Critical risk' },
-          { color: '#d97706', label: 'Amber — Elevated risk' },
-          { color: '#16a34a', label: 'Green — Normal' },
-        ].map(({ color, label }) => (
-          <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#64748b' }}>
-            <span style={{ width: 10, height: 10, borderRadius: '50%', background: color, display: 'inline-block', flexShrink: 0 }} />
-            {label}
-          </span>
-        ))}
-        <span style={{ fontSize: 11, color: '#475569', marginLeft: 'auto' }}>
-          Click each cell to update RAG status
+    <button
+      onClick={onClick}
+      style={{
+        background: isSelected ? 'rgba(59,130,246,0.18)' : 'rgba(255,255,255,0.05)',
+        border: isSelected
+          ? '1px solid rgba(59,130,246,0.5)'
+          : '1px solid rgba(255,255,255,0.08)',
+        borderRadius: 10,
+        padding: '8px 12px',
+        cursor: 'pointer',
+        minWidth: 130,
+        flexShrink: 0,
+        textAlign: 'left',
+        backdropFilter: 'blur(12px)',
+        transition: 'all 0.15s',
+      }}
+    >
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <RagDot status={worst} size={9} />
+        <span style={{ color: '#e2e8f0', fontSize: 11, fontWeight: 600, lineHeight: 1.2 }}>
+          {kpi.short}
         </span>
       </div>
-    </SectionCard>
-  );
-}
-
-function KPIDefinitionsPanel({ kpis }) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <Card>
-      {/* Accordion header */}
-      <button
-        onClick={() => setOpen(v => !v)}
-        style={{
-          width: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '14px 20px',
-          background: 'transparent',
-          border: 'none',
-          borderBottom: open ? '1px solid rgba(255,255,255,0.08)' : 'none',
-          cursor: 'pointer',
-          color: '#cbd5e1',
-        }}
-      >
-        <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', color: '#64748b' }}>
-          KPI Definitions
-        </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#64748b', fontWeight: 500 }}>
-          {open ? 'Collapse' : 'Expand'}
-          <svg
-            width={14} height={14}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }}
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-          </svg>
-        </div>
-      </button>
-
-      {open && (
-        <div style={{ padding: '16px 20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
-          {kpis.map(kpi => (
-            <div
-              key={kpi.id}
-              style={{
-                borderRadius: 10,
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                padding: '12px 14px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-              }}
-            >
-              <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>{kpi.label}</p>
-              <p style={{ margin: 0, fontSize: 11, color: '#64748b', lineHeight: 1.5 }}>{kpi.description}</p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 2 }}>
-                <div style={{ display: 'flex', gap: 6, fontSize: 11, alignItems: 'flex-start' }}>
-                  <span>🔴</span>
-                  <span><span style={{ fontWeight: 600, color: '#fca5a5' }}>Red:</span> <span style={{ color: '#64748b' }}>{kpi.red}</span></span>
-                </div>
-                <div style={{ display: 'flex', gap: 6, fontSize: 11, alignItems: 'flex-start' }}>
-                  <span>🟡</span>
-                  <span><span style={{ fontWeight: 600, color: '#fcd34d' }}>Amber:</span> <span style={{ color: '#64748b' }}>{kpi.amber}</span></span>
-                </div>
-                <div style={{ display: 'flex', gap: 6, fontSize: 11, alignItems: 'flex-start' }}>
-                  <span>🟢</span>
-                  <span><span style={{ fontWeight: 600, color: '#86efac' }}>Green:</span> <span style={{ color: '#64748b' }}>{kpi.green}</span></span>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function HeatmapStatsCard({ stats, allPlants, allKpis, kpiData }) {
-  const { totalRed, totalAmber, totalGreen, criticalKpiLabel, criticalPlantLabel } = stats;
-  const total = totalRed + totalAmber + totalGreen || 1;
-
-  return (
-    <SectionCard title="Heatmap Statistics">
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 16 }}>
-
-        {/* Count bars */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <p style={{ margin: '0 0 4px', fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-            Cell Counts (All Plants)
-          </p>
-          {[
-            { label: 'Red',   count: totalRed,   color: '#dc2626', textColor: '#fca5a5' },
-            { label: 'Amber', count: totalAmber, color: '#d97706', textColor: '#fcd34d' },
-            { label: 'Green', count: totalGreen, color: '#16a34a', textColor: '#86efac' },
-          ].map(({ label, count, color, textColor }) => {
-            const pct = Math.round((count / total) * 100);
-            return (
-              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ width: 10, height: 10, borderRadius: '50%', background: color, display: 'inline-block', flexShrink: 0 }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: textColor }}>{label}</span>
-                    <span style={{ fontSize: 11, color: '#475569' }}>{count} ({pct}%)</span>
-                  </div>
-                  <div style={{ width: '100%', height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.07)', overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 2, transition: 'width 0.3s ease' }} />
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Most critical KPI */}
-        <div style={{
-          padding: '14px 16px',
-          borderRadius: 12,
-          background: 'rgba(220,38,38,0.1)',
-          border: '1px solid rgba(220,38,38,0.25)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 6,
-        }}>
-          <p style={{ margin: 0, fontSize: 10, fontWeight: 700, color: '#fca5a5', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-            Most Critical KPI
-          </p>
-          <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#fca5a5' }}>{criticalKpiLabel}</p>
-          <p style={{ margin: 0, fontSize: 11, color: '#ef4444', lineHeight: 1.5 }}>
-            Highest number of red-status plants across the portfolio.
-          </p>
-        </div>
-
-        {/* Most critical plant */}
-        <div style={{
-          padding: '14px 16px',
-          borderRadius: 12,
-          background: 'rgba(217,119,6,0.1)',
-          border: '1px solid rgba(217,119,6,0.25)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 6,
-        }}>
-          <p style={{ margin: 0, fontSize: 10, fontWeight: 700, color: '#fcd34d', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-            Most Critical Plant
-          </p>
-          <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#fcd34d' }}>{criticalPlantLabel}</p>
-          <p style={{ margin: 0, fontSize: 11, color: '#d97706', lineHeight: 1.5 }}>
-            Highest number of red KPIs — broadest risk exposure.
-          </p>
-        </div>
-
+      <div className="flex items-center gap-1.5">
+        <span style={{ fontSize: 10, color: '#fca5a5', fontWeight: 700 }}>{counts.red}🔴</span>
+        <span style={{ fontSize: 10, color: '#fcd34d', fontWeight: 700 }}>{counts.amber}🟡</span>
+        <span style={{ fontSize: 10, color: '#86efac', fontWeight: 700 }}>{counts.green}🟢</span>
+        <span style={{ fontSize: 12, color: trendColor, fontWeight: 800, marginLeft: 2 }}>{trendArrow}</span>
       </div>
-    </SectionCard>
+    </button>
   );
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+// ── Main page ─────────────────────────────────────────────────
+export default function KPITrackerPage({
+  plants,
+  kpis,
+  kpiHistory,
+  selectedWeek,
+  prevWeek,
+  selectedWeekIdx,
+  setSelectedWeekIdx,
+  updateKpi,
+}) {
+  const [countryFilter,   setCountryFilter]   = useState('ALL');
+  const [highlightedKpi,  setHighlightedKpi]  = useState(null);
+  const [trendOpen,       setTrendOpen]       = useState(false);
+  const [historyOpen,     setHistoryOpen]     = useState(false);
+  const [defsOpen,        setDefsOpen]        = useState(false);
+  const [historyKpi,      setHistoryKpi]      = useState(kpis?.[0]?.id || 'rawMaterial');
 
-export default function KPITrackerPage({ plants, kpis, kpiData, setKpiData }) {
-  const [countryFilter, setCountryFilter] = useState('ALL');
+  const kpiData  = selectedWeek?.kpiData  || {};
+  const prevData = prevWeek?.kpiData      || null;
 
   const filteredPlants = countryFilter === 'ALL'
     ? plants
     : plants.filter(p => p.country === countryFilter);
 
-  // Summary always across ALL plants
-  const summaries = kpiSummaries(kpis, plants, kpiData);
+  // ── Collapsible section header ────────────────────────────────
+  function CollapseHeader({ open, setOpen, title, subtitle }) {
+    return (
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-5 py-3"
+        style={{
+          background: 'transparent',
+          border: 'none',
+          cursor: 'pointer',
+          borderBottom: open ? '1px solid rgba(255,255,255,0.07)' : 'none',
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <span style={{ color: '#cbd5e1', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            {title}
+          </span>
+          {subtitle && (
+            <span style={{ color: '#475569', fontSize: 11 }}>{subtitle}</span>
+          )}
+        </div>
+        <span style={{ color: '#475569', fontSize: 16, fontWeight: 700 }}>{open ? '▲' : '▼'}</span>
+      </button>
+    );
+  }
 
-  // Stats across ALL plants
-  const stats = computeHeatmapStats(kpis, plants, kpiData);
-
+  // ── TOP BAR ───────────────────────────────────────────────────
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, paddingBottom: 32 }}>
+    <div className="flex flex-col gap-5">
 
-      {/* Page header */}
-      <div>
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: '#f1f5f9', letterSpacing: '-0.02em' }}>
-          KPI Tracker
-        </h1>
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>
-          12-KPI status matrix across all ASEAN ME plants — updated weekly
-        </p>
+      {/* TOP BAR */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <WeekSelector
+          kpiHistory={kpiHistory}
+          selectedWeekIdx={selectedWeekIdx}
+          setSelectedWeekIdx={setSelectedWeekIdx}
+        />
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span style={{ color: '#64748b', fontSize: 11, fontWeight: 500 }}>Country:</span>
+          {COUNTRIES.map(c => (
+            <button
+              key={c.code}
+              onClick={() => setCountryFilter(c.code)}
+              style={{
+                padding: '3px 11px',
+                borderRadius: 20,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                background: countryFilter === c.code
+                  ? 'rgba(59,130,246,0.25)'
+                  : 'rgba(255,255,255,0.06)',
+                border: countryFilter === c.code
+                  ? '1px solid rgba(59,130,246,0.5)'
+                  : '1px solid rgba(255,255,255,0.08)',
+                color: countryFilter === c.code ? '#93c5fd' : '#94a3b8',
+                transition: 'all 0.15s',
+              }}
+            >
+              {c.flag ? `${c.flag} ${c.label}` : c.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Filter bar */}
-      <SectionCard title="Filter by Country">
-        <FilterBar active={countryFilter} onChange={setCountryFilter} />
-      </SectionCard>
+      {/* KPI SUMMARY ROW */}
+      <div>
+        <div style={{ color: '#64748b', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
+          KPI Overview — All Plants
+        </div>
+        <div
+          className="flex gap-2 pb-2"
+          style={{ overflowX: 'auto', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,0.1) transparent' }}
+        >
+          {kpis.map(kpi => (
+            <KpiSummaryCard
+              key={kpi.id}
+              kpi={kpi}
+              kpiData={kpiData}
+              plants={plants}
+              prevKpiData={prevData}
+              isSelected={highlightedKpi === kpi.id}
+              onClick={() => setHighlightedKpi(h => h === kpi.id ? null : kpi.id)}
+            />
+          ))}
+        </div>
+      </div>
 
-      {/* KPI Summary row — always all plants */}
-      <SummaryHeaderRow kpis={kpis} summaries={summaries} />
+      {/* KPI MATRIX */}
+      <Card>
+        {/* Matrix header */}
+        <div className="flex items-center justify-between px-5 py-3"
+             style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span style={{ color: '#cbd5e1', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              KPI Matrix
+            </span>
+            <span style={{ color: '#475569', fontSize: 11 }}>
+              {selectedWeek?.week} · {selectedWeek?.label}
+            </span>
+            {selectedWeek && (
+              <span
+                style={selectedWeek.status === 'forecast'
+                  ? { background: 'rgba(217,119,6,0.15)', border: '1px solid rgba(217,119,6,0.3)', color: '#fcd34d', padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 600 }
+                  : { background: 'rgba(22,163,74,0.15)',  border: '1px solid rgba(22,163,74,0.3)',  color: '#86efac', padding: '2px 9px', borderRadius: 20, fontSize: 11, fontWeight: 600 }}
+              >
+                {selectedWeek.status === 'forecast' ? '📋 Forecast' : '✅ Actual'}
+              </span>
+            )}
+          </div>
+          {selectedWeek?.status === 'actual' && (
+            <span style={{ background: 'rgba(220,38,38,0.12)', border: '1px solid rgba(220,38,38,0.25)', color: '#fca5a5', padding: '3px 10px', borderRadius: 8, fontSize: 10, fontWeight: 600 }}>
+              ⚠ Editing {selectedWeek.week} — Actual data
+            </span>
+          )}
+        </div>
 
-      {/* KPI Matrix — inline editing */}
-      <KPIMatrix
-        plants={filteredPlants}
-        kpis={kpis}
-        kpiData={kpiData}
-        setKpiData={setKpiData}
-        summaries={summaries}
-      />
+        <div className="p-4" style={{ overflowX: 'auto' }}>
+          <table style={{ minWidth: 900, borderCollapse: 'separate', borderSpacing: 0, width: '100%' }}>
+            <thead>
+              <tr>
+                {/* Sticky plant column header */}
+                <th
+                  style={{
+                    position: 'sticky',
+                    left: 0,
+                    zIndex: 10,
+                    background: '#0d1f3c',
+                    padding: '6px 12px',
+                    textAlign: 'left',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    color: '#475569',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                    borderBottom: '1px solid rgba(255,255,255,0.07)',
+                    borderRight: '1px solid rgba(255,255,255,0.07)',
+                    whiteSpace: 'nowrap',
+                    minWidth: 140,
+                  }}
+                >
+                  Plant
+                </th>
 
-      {/* Heatmap stats */}
-      <HeatmapStatsCard
-        stats={stats}
-        allPlants={plants}
-        allKpis={kpis}
-        kpiData={kpiData}
-      />
+                {/* KPI column headers */}
+                {kpis.map(kpi => {
+                  const counts = { red: 0, amber: 0, green: 0 };
+                  for (const p of plants) {
+                    const v = (kpiData?.[p.id] || {})[kpi.id] || 'green';
+                    counts[v]++;
+                  }
+                  const worst = counts.red > 0 ? 'red' : counts.amber > 0 ? 'amber' : 'green';
+                  const isHL = highlightedKpi === kpi.id;
+                  return (
+                    <th
+                      key={kpi.id}
+                      onClick={() => setHighlightedKpi(h => h === kpi.id ? null : kpi.id)}
+                      style={{
+                        padding: '6px 8px',
+                        textAlign: 'center',
+                        fontSize: 10,
+                        fontWeight: 600,
+                        color: isHL ? '#93c5fd' : '#64748b',
+                        borderBottom: '1px solid rgba(255,255,255,0.07)',
+                        cursor: 'pointer',
+                        background: isHL ? 'rgba(59,130,246,0.1)' : 'transparent',
+                        whiteSpace: 'nowrap',
+                        maxWidth: 88,
+                        minWidth: 80,
+                        transition: 'background 0.15s',
+                      }}
+                    >
+                      <div className="flex flex-col items-center gap-1">
+                        <RagDot status={worst} size={7} />
+                        <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 80 }}>
+                          {kpi.short}
+                        </span>
+                      </div>
+                    </th>
+                  );
+                })}
 
-      {/* KPI Definitions — accordion */}
-      <KPIDefinitionsPanel kpis={kpis} />
+                {/* Red count header */}
+                <th style={{
+                  padding: '6px 10px',
+                  textAlign: 'center',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: '#475569',
+                  borderBottom: '1px solid rgba(255,255,255,0.07)',
+                  whiteSpace: 'nowrap',
+                }}>
+                  🔴
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {filteredPlants.map((plant, rowIdx) => {
+                const overallStatus = plantRag(kpiData, plant.id);
+                const redCount      = countRag(kpiData, plant.id, 'red');
+                const rowBg         = rowIdx % 2 === 0
+                  ? 'rgba(255,255,255,0.00)'
+                  : 'rgba(255,255,255,0.025)';
+
+                return (
+                  <tr key={plant.id} style={{ background: rowBg }}>
+                    {/* Sticky plant name */}
+                    <td
+                      style={{
+                        position: 'sticky',
+                        left: 0,
+                        zIndex: 5,
+                        background: rowIdx % 2 === 0 ? '#0d1f3c' : '#0e2040',
+                        padding: '7px 12px',
+                        borderRight: '1px solid rgba(255,255,255,0.07)',
+                        borderBottom: '1px solid rgba(255,255,255,0.04)',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span style={{ fontSize: 15 }}>{plant.flag}</span>
+                        <span style={{ color: '#e2e8f0', fontSize: 12, fontWeight: 600 }}>{plant.name}</span>
+                        <RagBadge status={overallStatus} />
+                      </div>
+                    </td>
+
+                    {/* KPI cells */}
+                    {kpis.map(kpi => {
+                      const val   = (kpiData?.[plant.id] || {})[kpi.id] || 'green';
+                      const isHL  = highlightedKpi === kpi.id;
+                      return (
+                        <td
+                          key={kpi.id}
+                          style={{
+                            padding: '5px 6px',
+                            textAlign: 'center',
+                            borderBottom: '1px solid rgba(255,255,255,0.04)',
+                            background: isHL ? 'rgba(59,130,246,0.07)' : 'transparent',
+                            transition: 'background 0.15s',
+                          }}
+                        >
+                          <RagSelect
+                            value={val}
+                            onChange={newVal => updateKpi(plant.id, kpi.id, newVal)}
+                          />
+                        </td>
+                      );
+                    })}
+
+                    {/* Red count */}
+                    <td style={{
+                      padding: '5px 10px',
+                      textAlign: 'center',
+                      borderBottom: '1px solid rgba(255,255,255,0.04)',
+                    }}>
+                      <span style={{
+                        fontSize: 13,
+                        fontWeight: 800,
+                        color: redCount > 0 ? '#fca5a5' : '#475569',
+                        textShadow: redCount > 0 ? '0 0 8px rgba(220,38,38,0.5)' : 'none',
+                      }}>
+                        {redCount}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {/* TREND COMPARISON TABLE */}
+      <Card>
+        <CollapseHeader
+          open={trendOpen}
+          setOpen={setTrendOpen}
+          title="Week-on-Week Comparison"
+          subtitle={prevWeek ? `${prevWeek.week} → ${selectedWeek?.week}` : 'No previous week'}
+        />
+        {trendOpen && (
+          <div className="p-4" style={{ overflowX: 'auto' }}>
+            {!prevWeek ? (
+              <div style={{ color: '#475569', fontSize: 12, textAlign: 'center', padding: '20px 0' }}>
+                No previous week data available.
+              </div>
+            ) : (
+              <table style={{ minWidth: 840, borderCollapse: 'separate', borderSpacing: 0, width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th style={{
+                      position: 'sticky', left: 0, zIndex: 10,
+                      background: '#0d1f3c',
+                      padding: '5px 12px', textAlign: 'left',
+                      fontSize: 10, fontWeight: 700, color: '#475569',
+                      textTransform: 'uppercase', letterSpacing: '0.06em',
+                      borderBottom: '1px solid rgba(255,255,255,0.07)',
+                      borderRight: '1px solid rgba(255,255,255,0.07)',
+                      minWidth: 140,
+                    }}>Plant / Row</th>
+                    {kpis.map(kpi => (
+                      <th key={kpi.id} style={{
+                        padding: '5px 6px', textAlign: 'center',
+                        fontSize: 10, fontWeight: 600, color: '#64748b',
+                        borderBottom: '1px solid rgba(255,255,255,0.07)',
+                        whiteSpace: 'nowrap', maxWidth: 88, minWidth: 80,
+                      }}>{kpi.short}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredPlants.map((plant, pIdx) => {
+                    const curRow  = kpiData?.[plant.id]         || {};
+                    const prevRow = prevWeek.kpiData?.[plant.id] || {};
+                    const isLast  = pIdx === filteredPlants.length - 1;
+
+                    const rowBorderBottom = isLast
+                      ? 'none'
+                      : '2px solid rgba(255,255,255,0.08)';
+
+                    return [
+                      /* Row A — current week */
+                      <tr key={`${plant.id}-cur`}>
+                        <td style={{
+                          position: 'sticky', left: 0, zIndex: 5,
+                          background: '#0d1f3c',
+                          padding: '5px 12px',
+                          borderRight: '1px solid rgba(255,255,255,0.07)',
+                          borderBottom: '1px solid rgba(255,255,255,0.04)',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          <div className="flex items-center gap-1.5">
+                            <span style={{ fontSize: 14 }}>{plant.flag}</span>
+                            <span style={{ color: '#cbd5e1', fontSize: 12, fontWeight: 600 }}>{plant.name}</span>
+                            <span style={{ color: '#93c5fd', fontSize: 10, fontWeight: 600 }}>
+                              {selectedWeek?.week}
+                            </span>
+                          </div>
+                        </td>
+                        {kpis.map(kpi => (
+                          <td key={kpi.id} style={{ padding: '5px 6px', textAlign: 'center', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                            <RagDot status={curRow[kpi.id] || 'green'} size={11} />
+                          </td>
+                        ))}
+                      </tr>,
+
+                      /* Row B — previous week */
+                      <tr key={`${plant.id}-prev`}>
+                        <td style={{
+                          position: 'sticky', left: 0, zIndex: 5,
+                          background: '#0d1f3c',
+                          padding: '5px 12px',
+                          borderRight: '1px solid rgba(255,255,255,0.07)',
+                          borderBottom: '1px solid rgba(255,255,255,0.04)',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          <span style={{ color: '#475569', fontSize: 10, marginLeft: 22 }}>
+                            {prevWeek.week} (prev)
+                          </span>
+                        </td>
+                        {kpis.map(kpi => (
+                          <td key={kpi.id} style={{ padding: '5px 6px', textAlign: 'center', borderBottom: '1px solid rgba(255,255,255,0.04)', opacity: 0.5 }}>
+                            <RagDot status={prevRow[kpi.id] || 'green'} size={9} />
+                          </td>
+                        ))}
+                      </tr>,
+
+                      /* Row C — delta arrows */
+                      <tr key={`${plant.id}-delta`} style={{ borderBottom: rowBorderBottom }}>
+                        <td style={{
+                          position: 'sticky', left: 0, zIndex: 5,
+                          background: '#0d1f3c',
+                          padding: '4px 12px',
+                          borderRight: '1px solid rgba(255,255,255,0.07)',
+                          borderBottom: rowBorderBottom,
+                          whiteSpace: 'nowrap',
+                        }}>
+                          <span style={{ color: '#334155', fontSize: 10, marginLeft: 22 }}>Δ</span>
+                        </td>
+                        {kpis.map(kpi => {
+                          const d = getDelta(prevRow[kpi.id] || 'green', curRow[kpi.id] || 'green');
+                          return (
+                            <td key={kpi.id} style={{ padding: '4px 6px', textAlign: 'center', borderBottom: rowBorderBottom }}>
+                              <span style={{ fontSize: 13, fontWeight: 800, color: d.color }}>{d.arrow}</span>
+                            </td>
+                          );
+                        })}
+                      </tr>,
+                    ];
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </Card>
+
+      {/* KPI HISTORY CHART */}
+      <Card>
+        <div style={{ borderBottom: historyOpen ? '1px solid rgba(255,255,255,0.07)' : 'none' }}>
+          <div className="flex items-center justify-between px-5 py-3">
+            <button
+              onClick={() => setHistoryOpen(v => !v)}
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
+            >
+              <span style={{ color: '#cbd5e1', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                KPI Trend History
+              </span>
+              <span style={{ color: '#475569', fontSize: 16, fontWeight: 700 }}>{historyOpen ? '▲' : '▼'}</span>
+            </button>
+            {historyOpen && (
+              <select
+                value={historyKpi}
+                onChange={e => setHistoryKpi(e.target.value)}
+                style={{
+                  background: 'rgba(255,255,255,0.08)',
+                  border: '1px solid rgba(255,255,255,0.15)',
+                  color: 'white',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  borderRadius: 8,
+                  padding: '4px 10px',
+                  cursor: 'pointer',
+                  outline: 'none',
+                  minWidth: 160,
+                }}
+              >
+                {kpis.map(k => (
+                  <option key={k.id} value={k.id}>{k.short}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        </div>
+
+        {historyOpen && (
+          <div className="p-4" style={{ overflowX: 'auto' }}>
+            {/* Week labels row */}
+            <div className="flex items-center gap-1 mb-2" style={{ paddingLeft: 140 }}>
+              {kpiHistory.map((wk, wi) => (
+                <div
+                  key={wk.week}
+                  style={{
+                    width: 28,
+                    flexShrink: 0,
+                    textAlign: 'center',
+                    fontSize: 9,
+                    fontWeight: wi === selectedWeekIdx ? 800 : 500,
+                    color: wi === selectedWeekIdx ? '#93c5fd' : '#475569',
+                  }}
+                >
+                  {wk.week}
+                </div>
+              ))}
+            </div>
+
+            {/* One row per plant */}
+            {plants.map(plant => (
+              <div key={plant.id} className="flex items-center gap-1 mb-1.5">
+                {/* Plant label */}
+                <div style={{ width: 132, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 13 }}>{plant.flag}</span>
+                  <span style={{ color: '#94a3b8', fontSize: 11, fontWeight: 600 }}>{plant.name}</span>
+                </div>
+
+                {/* Blocks */}
+                {kpiHistory.map((wk, wi) => {
+                  const status = (wk.kpiData?.[plant.id] || {})[historyKpi] || 'green';
+                  return (
+                    <RagBlock
+                      key={wk.week}
+                      status={status}
+                      isSelected={wi === selectedWeekIdx}
+                      isForecast={wk.status === 'forecast'}
+                      width={28}
+                    />
+                  );
+                })}
+              </div>
+            ))}
+
+            {/* Legend */}
+            <div className="flex items-center gap-4 mt-3" style={{ paddingLeft: 140 }}>
+              <div className="flex items-center gap-1.5">
+                <span style={{ display: 'inline-block', width: 14, height: 10, borderRadius: 2, background: RAG.red.bg }} />
+                <span style={{ color: '#94a3b8', fontSize: 10 }}>Red</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span style={{ display: 'inline-block', width: 14, height: 10, borderRadius: 2, background: RAG.amber.bg }} />
+                <span style={{ color: '#94a3b8', fontSize: 10 }}>Amber</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span style={{ display: 'inline-block', width: 14, height: 10, borderRadius: 2, background: RAG.green.bg }} />
+                <span style={{ color: '#94a3b8', fontSize: 10 }}>Green</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span style={{ display: 'inline-block', width: 14, height: 10, borderRadius: 2, background: RAG.green.bg, opacity: 0.45 }} />
+                <span style={{ color: '#94a3b8', fontSize: 10 }}>Forecast</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span style={{ display: 'inline-block', width: 14, height: 10, borderRadius: 2, border: '2px solid white', background: 'transparent' }} />
+                <span style={{ color: '#94a3b8', fontSize: 10 }}>Selected week</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* KPI DEFINITIONS */}
+      <Card>
+        <CollapseHeader
+          open={defsOpen}
+          setOpen={setDefsOpen}
+          title="KPI Definitions"
+          subtitle={`${kpis.length} KPIs`}
+        />
+        {defsOpen && (
+          <div className="p-4">
+            <div className="flex flex-col gap-2">
+              {kpis.map((kpi, i) => (
+                <div
+                  key={kpi.id}
+                  style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.07)',
+                    borderRadius: 10,
+                    padding: '12px 16px',
+                  }}
+                >
+                  <div className="flex items-start gap-3">
+                    <span style={{
+                      background: 'rgba(255,255,255,0.08)',
+                      color: '#94a3b8',
+                      fontSize: 10,
+                      fontWeight: 700,
+                      borderRadius: 6,
+                      padding: '2px 7px',
+                      flexShrink: 0,
+                      marginTop: 1,
+                    }}>
+                      KPI {String(i + 1).padStart(2, '0')}
+                    </span>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 700 }}>{kpi.label}</span>
+                        <span style={{ color: '#475569', fontSize: 11 }}>· {kpi.short}</span>
+                      </div>
+                      <p style={{ color: '#94a3b8', fontSize: 11, marginBottom: 8, lineHeight: 1.5 }}>
+                        {kpi.description}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <span style={{ background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.25)', color: '#fca5a5', fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 6 }}>
+                          🔴 {kpi.red}
+                        </span>
+                        <span style={{ background: 'rgba(217,119,6,0.1)', border: '1px solid rgba(217,119,6,0.25)', color: '#fcd34d', fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 6 }}>
+                          🟡 {kpi.amber}
+                        </span>
+                        <span style={{ background: 'rgba(22,163,74,0.1)', border: '1px solid rgba(22,163,74,0.25)', color: '#86efac', fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 6 }}>
+                          🟢 {kpi.green}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Card>
 
     </div>
   );
