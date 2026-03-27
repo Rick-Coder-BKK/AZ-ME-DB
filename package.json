@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "homepage": "https://rickd-uk.github.io/AZ-ME-DB",
+  "homepage": "https://Rick-Coder-BKK.github.io/AZ-ME-DB",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
