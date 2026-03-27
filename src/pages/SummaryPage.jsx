@@ -402,8 +402,11 @@ function PlantSummaryTable({ plants, kpis, kpiData, measuresData, plantTrends, n
               const redCount = countRedKpis(kpiData, plant.id);
               const risk = topRisk(kpiData, kpis, plant.id);
               const trend = plantTrends?.[plant.id] || 'stable';
-              const activeMeasure =
-                (measuresData?.[plant.id] || []).find((m) => m.status === 'active')?.label || '—';
+              const plantMeasuresObj = measuresData?.[plant.id] || {};
+              const activeMeasureId = Object.entries(plantMeasuresObj).find(([, v]) => v === 'active')?.[0];
+              const activeMeasure = activeMeasureId
+                ? (measures.find((m) => m.id === activeMeasureId)?.label || activeMeasureId)
+                : '—';
 
               return (
                 <tr
@@ -472,10 +475,8 @@ function MostAdoptedMeasures({ measures, measuresData, plants }) {
   for (const measure of measures) {
     let count = 0;
     for (const plant of plants) {
-      const found = (measuresData?.[plant.id] || []).find(
-        (m) => m.id === measure.id && m.status === 'active'
-      );
-      if (found) count++;
+      const plantMeasures = measuresData?.[plant.id] || {};
+      if (plantMeasures[measure.id] === 'active') count++;
     }
     adoptionCounts[measure.id] = count;
   }
