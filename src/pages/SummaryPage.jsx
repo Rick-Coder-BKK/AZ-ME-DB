@@ -373,7 +373,7 @@ function CountryMapCard({ country: c }) {
 // ---------------------------------------------------------------------------
 // Section 5: Plant Summary Table
 // ---------------------------------------------------------------------------
-function PlantSummaryTable({ plants, kpis, kpiData, measuresData, plantTrends, navigate }) {
+function PlantSummaryTable({ plants, kpis, measures, kpiData, measuresData, plantTrends, navigate }) {
   const handleRowClick = () => {
     if (navigate) navigate('plants');
   };
@@ -643,6 +643,7 @@ export default function SummaryPage({
       <PlantSummaryTable
         plants={plants}
         kpis={kpis}
+        measures={measures}
         kpiData={kpiData}
         measuresData={measuresData}
         plantTrends={plantTrends}
